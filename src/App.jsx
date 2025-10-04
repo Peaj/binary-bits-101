@@ -289,13 +289,13 @@ export default function App() {
                   {!hideBottomWhileMerging && (
                     <motion.div key={idx + ":" + g}
                       className="absolute"
-                      style={{ bottom: rel * 20 }}
+                      style={{ bottom: rel * 30 }}
                       initial={{ opacity: 0 }}
-                      animate={{ opacity: isBottom ? 1 : Math.max(0.35, 0.6 - rel * 0.1), scale: isBottom ? 1 : 0.92 }}
+                      animate={{ opacity: isBottom ? 1 : Math.max(0, 0.25 - rel * 0.05), scale: 1 - rel * 0.15 }}
                       ref={isBottom ? bottomGoalRef : undefined}
                     >
                       <div className="border-2 border-black rounded-xl px-4 py-3 bg-black/0">
-                        <div className={`font-mono tracking-[0.2em] ${isBottom ? 'text-5xl' : 'text-3xl'} text-center`}>{toBinary(g, bits)}</div>
+                        <div className={`font-mono tracking-[0.2em] text-5xl text-center`}>{toBinary(g, bits)}</div>
                         <div className={`text-center font-mono text-xs ${DEC_CLASS}`}><span className="opacity-60">dec</span> {g}</div>
                       </div>
                     </motion.div>
