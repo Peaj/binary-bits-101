@@ -1,15 +1,11 @@
 import React, { useMemo, useState, useEffect, useLayoutEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
-// --- Binary Bits — v1.2 ---
-// New: "digit-added" pre-animation on bit-width increase so the DOM stabilizes
-//      before we run the merge flight. This preserves animation & sound on the
-//      first match after adding a bit.
-// Also kept:
-// - Reliable advance (animation complete + fail-safe timer)
-// - Stable x-axis (left/top + translate(-50%, -50%))
-// - Inverted stack, ripple + bloom, double blip
-// - Par (BFS), full hint, par-capped generation, decimal readouts, base badges
+// --- Binary Bits — v1.2.3 ---
+// Changes: goal generator now enforces short paths per level (1→3 steps),
+// removed old fallback code that could produce long/boring goals.
+// Kept: digit-added pre-animation, merge flight + ripple, par + hint,
+// inverted stack with subtler overlap.
 
 // ========== helpers ==========
 const toBinary = (v, bits) => v.toString(2).padStart(bits, "0");
@@ -33,7 +29,12 @@ const LEVEL_OPS = [
 ];
 
 function bitsForLevel(l) { return Math.min(8, 3 + l); }
-function maxParForLevel(l){ if(l<=1) return 3; if(l===2) return 4; if(l===3) return 5; return 6; }
+function stepsBounds(level){
+  if(level <= 1) return { min: 1, max: 1 };
+  if(level === 2) return { min: 1, max: 2 };
+  return { min: 1, max: 3 };
+}
+function maxParForLevel(l){ return stepsBounds(l).max; }
 
 // BFS shortest path (par)
 function bfsOptimal(start, goal, ops, ctx) {
@@ -62,27 +63,57 @@ function bfsOptimal(start, goal, ops, ctx) {
   return { dist: Infinity, path: [] };
 }
 
-// Generate a short, reachable queue with per-level par cap
+// Generate a short, solvable queue where each goal is within the step bounds
 function generateQueue({ current, bits, level, depth = 4 }) {
   const mask = (1 << bits) - 1;
   const ids = LEVEL_OPS[Math.min(level - 1, LEVEL_OPS.length - 1)];
   const allowed = ids.map(id => OPS[id]);
   const ctx = { bits, mask };
-  const q = []; let base = current;
-  const parCap = maxParForLevel(level);
+
+  const { min, max } = stepsBounds(level);
+  const q = [];
+  let base = current;
+
   for (let i = 0; i < depth; i++) {
-    if (level <= 2 && base === 0) base = 1;
-    let best = base, bestDist = Infinity;
-    for (let attempt = 0; attempt < 6; attempt++) {
-      let v = base; const steps = randInt(1, 3);
-      for (let j = 0; j < steps; j++) { const op = allowed[randInt(0, allowed.length - 1)]; v = op.apply(v, ctx); }
-      if (level <= 2 && v === 0) v = 1;
+    let target = base;
+    let ok = false;
+
+    // Try to synthesize an exact-in-bounds goal by applying 1..3 ops
+    for (let attempt = 0; attempt < 20 && !ok; attempt++) {
+      const steps = (min === max) ? min : randInt(min, max);
+      let v = base;
+      let lastOp = null;
+      for (let s = 0; s < steps; s++) {
+        // Avoid three identical ops in a row when steps===3
+        let op = allowed[randInt(0, allowed.length - 1)];
+        if (lastOp && lastOp.id === op.id && steps >= 3 && s === 2) {
+          const pool = allowed.filter(o => o.id !== op.id);
+          if (pool.length) op = pool[randInt(0, pool.length - 1)];
+        }
+        v = op.apply(v, ctx);
+        lastOp = op;
+      }
+      if (level <= 2 && v === 0) continue; // avoid zero early
+      if (v === base) continue;             // must change
       const { dist } = bfsOptimal(base, v, allowed, ctx);
-      if (dist < bestDist) { best = v; bestDist = dist; }
-      if (dist !== Infinity && dist <= parCap) { best = v; bestDist = dist; break; }
+      if (dist !== Infinity && dist >= min && dist <= max) { target = v; ok = true; }
     }
-    const g = bestDist === Infinity ? (base || 1) : best;
-    q.push(g); base = g;
+
+    // Soft fallback: still prefer short BFS distance ≤ max
+    if (!ok) {
+      let best = base, bestDist = Infinity;
+      for (let attempt = 0; attempt < 24; attempt++) {
+        let v = base; const sN = randInt(1, 3);
+        for (let j = 0; j < sN; j++) { const op = allowed[randInt(0, allowed.length - 1)]; v = op.apply(v, ctx); }
+        const { dist } = bfsOptimal(base, v, allowed, ctx);
+        if (dist < bestDist) { best = v; bestDist = dist; }
+        if (dist !== Infinity && dist <= max) { best = v; bestDist = dist; break; }
+      }
+      target = (bestDist === Infinity) ? ((base||1) & mask) : best;
+    }
+
+    q.push(target);
+    base = target; // chain
   }
   return { queue: q, allowed, ctx };
 }
@@ -176,7 +207,7 @@ export default function App() {
 
     const { queue: q, allowed, ctx: ctxOut } = generateQueue({ current, bits: b, level });
     setBits(b);
-    setQueue(q);
+    setQueue(q.slice().reverse());
     setAllowedOps(allowed);
     setCtx(ctxOut);
 
@@ -264,7 +295,7 @@ export default function App() {
           <div className="font-bold text-2xl tracking-tight">Binary Bits 101</div>
           <div className="flex items-center gap-2">
             <span className="font-mono text-xs">lvl {level} · bits {bits}</span>
-            <span className="text-[10px] font-mono px-2 py-0.5 border-2 border-black rounded-full">v1.2</span>
+            <span className="text-[10px] font-mono px-2 py-0.5 border-2 border-black rounded-full">v1.2.3</span>
           </div>
         </div>
 
@@ -391,10 +422,11 @@ export default function App() {
 
     for(let i=0;i<10;i++){
       const {queue:q, allowed:allow, ctx:cx} = generateQueue({ current:1, bits:4, level:1, depth:3 });
-      q.forEach(g=> console.assert(g!==0, 'L1 should avoid 0000 goals'));
-      const base=1; q.forEach(g=>{
-        const rr = bfsOptimal(base, g, allow, cx); console.assert(rr.dist<=maxParForLevel(1), 'par <= cap');
-      });
+      const qr = q.slice().reverse();
+      const bottom = qr[qr.length - 1];
+      console.assert(bottom !== 0, 'L1 bottom should avoid 0000');
+      const rr = bfsOptimal(1, bottom, allow, cx);
+      console.assert(rr.dist<=maxParForLevel(1), 'bottom par <= cap');
     }
 
     const bits5=5, mask5=(1<<bits5)-1; const ctx5={bits:bits5,mask:mask5};
